@@ -1,29 +1,18 @@
 from django.conf.urls import url
-from django.conf.urls import include
-from django.contrib import admin
-from api.views import course,shoppingcart
-
-#
-#
-# urlpatterns = [
-#     # url(r'degreecourses/',views.Courses.as_view())
-# ]
-# from rest_framework.routers import DefaultRouter
-#
-# router = DefaultRouter()
-# router.register(r'courses', views.Courses)
-# urlpatterns += router.urls
+from api.views import course
+# from api.views import auth
+from api.views import shoppingcart
 
 
 urlpatterns = [
-    url(r'courselist/$',course.CourseView.as_view({'get':'create'})),
-    url(r'courselist/(?P<pk>\d+)/$',course.CourseView.as_view({'get':'retrieve'})),
-
-    url(r'degreecourse/$',course.DegreeCourseView.as_view({'get':'create'})),
-    url(r'degreecourse/(?P<pk>\d+)/$',course.DegreeCourseView.as_view({'get':'retrieve'})),
-
-    url(r'coursemodel/$',course.CourseModelView.as_view({'get':'create'})),
-    url(r'coursemodel/(?P<pk>\d+)/$',course.CourseModelView.as_view({'get':'retrieve'})),
-
-    url(r'shoppingcar/$',shoppingcart.ShoppingView.as_view({'post':'create','put':'update','delete':'destroy'}))
+    url(r"courses/", course.CoursesView.as_view()),
+    url(r"all_degreecourse_teacher/", course.AllDcourseTeacher.as_view()),
+    url(r"all_degreecourse_scholarship/", course.AllDegreecourseScholarship.as_view()),
+    url(r"all_course/", course.AllCourse.as_view()),
+    url(r"degreecourse_modulename/(?P<pk>\d+)/", course.DegreecourseModule.as_view()),
+    url(r"course_detail/(?P<pk>\d+)/", course.CourseDetail.as_view()),
+    url(r"course_qa/(?P<pk>\d+)/", course.CourseQuestion.as_view()),
+    url(r"course_outline/(?P<pk>\d+)/", course.CourseOutline.as_view()),
+    url(r"course_chapter/(?P<pk>\d+)/", course.CourseChapter.as_view()),
+    url(r"shopcart/$",shoppingcart.ShoppingCarView.as_view({"post": "create", "get": "list", "delete": "destroy", "put": "update"})),
 ]

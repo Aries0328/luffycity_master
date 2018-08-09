@@ -1,53 +1,145 @@
+import json
+import redis
+from django.conf import settings
 from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework.viewsets import ViewSetMixin
-from api.models import Course
+from rest_framework.response import Response
+from rest_framework.parsers import JSONParser, FormParser
+
+from api import models
 from api.utils.response import BaseResponse
 
-shoppingcar = []
+CONN = redis.Redis(host='192.168.184.130', port=6379)
 
-class ShoppingView(ViewSetMixin,APIView):
-    def create(self,request,*args,**kwargs):
-        res = BaseResponse()
-        course_id = request.data.get('courseId')
-        valid_period = request.data.get('valid_period_day')
+USER_ID = 1
 
-        course_obj = Course.objects.get(id = course_id)
-        valid_period_list = course_obj.price_policy.all().values('valid_period','price')
-        for i in valid_period_list:
-            if int(valid_period) == i['valid_period']:
-                user = {'userid':1,'course':{'course_id':course_obj.id,'course_name':course_obj.name,'price':i['price'],'price_list':list(valid_period_list)}}
-                shoppingcar.append(user)
-                res.data = '数据获取成功'
-                break
-        else:
-            res.code = 500
-            res.error = '数据不存在'
-        print(shoppingcar)
-        return Response(res.dict)
+class ShoppingCarView(ViewSetMixin, APIView):
 
-    def update(self,request,*args,**kwargs):
-        '''
-        验证:获取的新数据,旧数据都要存在于数据库
-
-
+    def list(self, request, *args, **kwargs):
+        """
+        查看购物车信息
         :param request:
         :param args:
         :param kwargs:
         :return:
-        '''
-        res = BaseResponse()
-        course_id = request.data.get('courseId')
-        valid_period_new = request.data.get('valid_period_day_new')
-        valid_period_old = request.data.get('valid_period_day_old')
+        """
+        ret = {'code': 998, 'data': None, 'error': None}
+        try:
+            shopping_car_course_list = []
+            pattern = settings.LUFFY_SHOPPING_CAR % (USER_ID, '*',)
+            user_key_list = CONN.keys(pattern)
+            for key in user_key_list:
+                temp = {
+                    'id': CONN.hget(key, 'id').decode('utf-8'),
+                    'name': CONN.hget(key, 'name').decode('utf-8'),
+                    'img': CONN.hget(key, 'img').decode('utf-8'),
+                    'default_price_id': CONN.hget(key, 'default_price_id').decode('utf-8'),
+                    'price_policy_dict': json.loads(CONN.hget(key, 'price_policy_dict').decode('utf-8'))
+                }
+                shopping_car_course_list.append(temp)
 
+            ret['data'] = shopping_car_course_list
+        except Exception as e:
+            ret['code'] = 10005
+            ret['error'] = '获取购物车列表失败'
 
-    def destroy(self,request,*args,**kwargs):
-        '''
-        只要id
+        return Response(ret)
+
+    def create(self, request, *args, **kwargs):
+        """
+        加入购物车
         :param request:
         :param args:
         :param kwargs:
         :return:
-        '''
-        pass
+        """
+        course_id = request.data.get('courseid')
+        policy_id = request.data.get('policyid')
+        ret ={'code': 10000, 'data': '购买成功'}
+        course = models.Course.objects.filter(id=course_id).first()
+        if not course:
+            return Response({'code': 10001, 'error': '课程不存在'})
+
+        price_policy_queryset = course.price_policy.all()
+        price_policy_dict = {}
+        for item in price_policy_queryset:
+            temp = {
+                'id': item.id,
+                'price': item.price,
+                'valid_period': item.valid_period,
+                'valid_period_display': item.get_valid_period_display()
+            }
+            price_policy_dict[item.id] = temp
+        if policy_id not in price_policy_dict:
+            return Response({'code': 10002, 'error': '价格策略修改错误'})
+
+        pattern = settings.LUFFY_SHOPPING_CAR % (USER_ID, '*',)
+        keys = CONN.keys(pattern)
+        if keys and len(keys) >= 1000:
+            return Response({'code': 10009, 'error': '购物车已满，请先结算后继续购买..'})
+
+        key = settings.LUFFY_SHOPPING_CAR % (USER_ID, course_id,)
+        CONN.hset(key, 'id', course_id)
+        CONN.hset(key, 'name', course.name)
+        CONN.hset(key, 'img', course.course_img)
+        CONN.hset(key, 'default_price_id', policy_id)
+        CONN.hset(key, 'price_policy_dict', json.dumps(price_policy_dict))
+
+        CONN.expire(key, 20 * 60)
+
+        return Response(ret)
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        删除购物车中的某个课程
+        :param request:
+        :param args:
+        :param kwargs:
+        :return:
+        """
+        response = BaseResponse()
+        try:
+            courseid = request.GET.get('courseid')
+            key = settings.LUFFY_SHOPPING_CAR % (USER_ID, courseid,)
+
+            CONN.delete(key)
+            response.data = '删除成功'
+        except Exception as e:
+            response.code = 10006
+            response.error = '删除失败'
+        return Response(response.dict)
+
+    def update(self, request, *args, **kwargs):
+        """
+        修改用户选中的价格策略
+        :param request:
+        :param args:
+        :param kwargs:
+        :return:
+        """
+        response = BaseResponse()
+        try:
+            course_id = request.data.get('courseid')
+            policy_id = str(request.data.get('policyid')) if request.data.get('policyid') else None
+            key = settings.LUFFY_SHOPPING_CAR % (USER_ID, course_id,)
+            if not CONN.exists(key):
+                response.code = 10007
+                response.error = '课程不存在'
+                return Response(response.dict)
+            price_policy_dict = json.loads(CONN.hget(key, 'price_policy_dict').decode('utf-8'))
+            if policy_id not in price_policy_dict:
+                response.code = 10008
+                response.error = '价格策略不存在'
+                return Response(response.dict)
+            CONN.hset(key, 'default_price_id', policy_id)
+            CONN.expire(key, 10 * 60)
+            response.data = '修改成功'
+        except Exception as e:
+            response.code = 10006
+            response.error = '修改失败'
+
+        return Response(response.dict)
+
+
+
+
